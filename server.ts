@@ -414,15 +414,41 @@ function applyLiveEditToClip(input: {
   return target;
 }
 
+const PUBLIC_DOMAIN = 'https://ctt-rho.vercel.app/';
+const ALLOWED_ORIGINS = [
+  'https://ctt-rho.vercel.app',
+  'http://localhost:3000',
+  'https://ais-dev-25ngdsiagyb62gdlktz6hs-54398651811.asia-southeast1.run.app',
+  'https://ais-pre-25ngdsiagyb62gdlktz6hs-54398651811.asia-southeast1.run.app',
+];
+
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
+
+  // CORS Middleware supporting https://ctt-rho.vercel.app/ and cross-origin clients
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && (ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.vercel.app'))) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
 
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
+      publicDomain: PUBLIC_DOMAIN,
       count: clips.length,
       historyCount: historyEntries.length,
       onlineUsers: getConnectedUsers().length,
@@ -431,6 +457,7 @@ async function startServer() {
 
   app.get('/api/clips', (_req, res) => {
     res.json({
+      publicDomain: PUBLIC_DOMAIN,
       clips,
       users: getConnectedUsers(),
       history: historyEntries,

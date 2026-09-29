@@ -22,6 +22,8 @@ import {
   Eye,
   Clock,
   ArrowUpRight,
+  Globe,
+  Share2,
 } from 'lucide-react';
 import type {
   SharedClip,
@@ -51,6 +53,33 @@ type HistoryFilterType = 'semua' | 'disalin' | 'ditempel' | 'diedit';
 type SortMode = 'terbaru' | 'populer';
 
 const LOCAL_HISTORY_KEY = 'tempelsalin_local_history_v1';
+const PUBLIC_WEB_DOMAIN = 'https://ctt-rho.vercel.app/';
+const FALLBACK_BACKEND_ORIGIN =
+  'https://ais-pre-25ngdsiagyb62gdlktz6hs-54398651811.asia-southeast1.run.app';
+
+function getBackendOrigin(): string {
+  if (typeof window === 'undefined') return '';
+  const host = window.location.hostname;
+  if (host === 'ctt-rho.vercel.app' || host.endsWith('.vercel.app')) {
+    return FALLBACK_BACKEND_ORIGIN;
+  }
+  return '';
+}
+
+function apiUrl(path: string): string {
+  const base = getBackendOrigin();
+  return `${base}${path}`;
+}
+
+function getWebSocketUrl(): string {
+  if (typeof window === 'undefined') return '';
+  const host = window.location.hostname;
+  if (host === 'ctt-rho.vercel.app' || host.endsWith('.vercel.app')) {
+    return `${FALLBACK_BACKEND_ORIGIN.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws`;
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
+}
 
 function getOrCreateClientIdentity(): { clientId: string; defaultName: string } {
   try {
@@ -188,6 +217,8 @@ export default function App() {
   const [historySearch, setHistorySearch] = useState<string>('');
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedDomainLink, setCopiedDomainLink] = useState<boolean>(false);
+  const [copiedShareClipId, setCopiedShareClipId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState<number>(Date.now());
 
@@ -332,7 +363,7 @@ export default function App() {
       } satisfies ServerEvent);
 
       if (!sendWsEvent({ type: 'history:record', entry })) {
-        fetch('/api/history', {
+        fetch(apiUrl('/api/history'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(entry),
@@ -345,12 +376,19 @@ export default function App() {
   // Fetch initial state via HTTP
   const fetchClipsFromServer = useCallback(async () => {
     try {
-      const res = await fetch('/api/clips');
+      const res = await fetch(apiUrl('/api/clips'));
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data.clips)) {
         setClips(data.clips);
-        setActiveCollabClipId((prev) => prev || data.clips[0]?.id || null);
+        const hashClipId = window.location.hash.replace(/^#/, '').trim();
+        const foundFromHash = data.clips.find((c: SharedClip) => c.id === hashClipId);
+        if (foundFromHash) {
+          setActiveCollabClipId(foundFromHash.id);
+          setLeftPanelMode('kolaborasi');
+        } else {
+          setActiveCollabClipId((prev) => prev || data.clips[0]?.id || null);
+        }
       }
       if (Array.isArray(data.users)) {
         setOnlineUsers(data.users);
@@ -405,8 +443,7 @@ export default function App() {
 
     function connectWebSocket() {
       if (isUnmounted) return;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const wsUrl = getWebSocketUrl();
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -600,7 +637,7 @@ export default function App() {
       });
 
       if (!sentViaWs) {
-        fetch(`/api/clips/${encodeURIComponent(clip.id)}`, {
+        fetch(apiUrl(`/api/clips/${encodeURIComponent(clip.id)}`), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -759,7 +796,7 @@ export default function App() {
     setTimeout(() => setComposerFeedback(null), 2500);
 
     try {
-      const res = await fetch('/api/clips', {
+      const res = await fetch(apiUrl('/api/clips'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -829,7 +866,7 @@ export default function App() {
           clientId: identity.clientId,
         })
       ) {
-        fetch(`/api/clips/${encodeURIComponent(clip.id)}/copy`, {
+        fetch(apiUrl(`/api/clips/${encodeURIComponent(clip.id)}/copy`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -838,6 +875,27 @@ export default function App() {
           }),
         }).catch(() => {});
       }
+    }
+  };
+
+  // Copy public web domain link (https://ctt-rho.vercel.app/)
+  const handleCopyDomainUrl = async () => {
+    const ok = await copyTextToClipboard(PUBLIC_WEB_DOMAIN);
+    if (ok) {
+      setCopiedDomainLink(true);
+      setTimeout(() => setCopiedDomainLink(false), 2200);
+    }
+  };
+
+  // Copy direct link to a specific clip on https://ctt-rho.vercel.app/
+  const handleShareClipLink = async (clip: SharedClip) => {
+    const shareUrl = `${PUBLIC_WEB_DOMAIN}#${clip.id}`;
+    const ok = await copyTextToClipboard(shareUrl);
+    if (ok) {
+      setCopiedShareClipId(clip.id);
+      setTimeout(() => {
+        setCopiedShareClipId((prev) => (prev === clip.id ? null : prev));
+      }, 2200);
     }
   };
 
@@ -868,7 +926,7 @@ export default function App() {
     });
     broadcastChannelRef.current?.postMessage({ type: 'history:deleted', id } satisfies ServerEvent);
     if (!sendWsEvent({ type: 'history:delete', id })) {
-      fetch(`/api/history/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+      fetch(apiUrl(`/api/history/${encodeURIComponent(id)}`), { method: 'DELETE' }).catch(() => {});
     }
   };
 
@@ -887,7 +945,7 @@ export default function App() {
 
     if (!sendWsEvent({ type: 'history:clear', clientId: targetClientId })) {
       const q = targetClientId ? `?clientId=${encodeURIComponent(targetClientId)}` : '';
-      fetch(`/api/history${q}`, { method: 'DELETE' }).catch(() => {});
+      fetch(apiUrl(`/api/history${q}`), { method: 'DELETE' }).catch(() => {});
     }
   };
 
@@ -898,7 +956,7 @@ export default function App() {
     broadcastChannelRef.current?.postMessage({ type: 'clip:updated', clip: updated });
 
     if (!sendWsEvent({ type: 'clip:pin', id: clip.id })) {
-      fetch(`/api/clips/${encodeURIComponent(clip.id)}/pin`, { method: 'PATCH' }).catch(() => {});
+      fetch(apiUrl(`/api/clips/${encodeURIComponent(clip.id)}/pin`), { method: 'PATCH' }).catch(() => {});
     }
   };
 
@@ -908,7 +966,7 @@ export default function App() {
     broadcastChannelRef.current?.postMessage({ type: 'clip:deleted', id });
 
     if (!sendWsEvent({ type: 'clip:delete', id })) {
-      fetch(`/api/clips/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+      fetch(apiUrl(`/api/clips/${encodeURIComponent(id)}`), { method: 'DELETE' }).catch(() => {});
     }
   };
 
@@ -1535,6 +1593,54 @@ export default function App() {
               )}
             </div>
 
+            {/* Domain Akses Web Resmi (https://ctt-rho.vercel.app/) */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+                  <Globe className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span>Domain Akses Web Resmi</span>
+                </div>
+                <a
+                  href={PUBLIC_WEB_DOMAIN}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 whitespace-nowrap"
+                >
+                  <span>Buka Web</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                <span className="text-xs font-mono text-slate-800 truncate select-all">
+                  {PUBLIC_WEB_DOMAIN}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyDomainUrl}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors flex items-center gap-1 shrink-0 cursor-pointer ${
+                    copiedDomainLink
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  }`}
+                >
+                  {copiedDomainLink ? (
+                    <>
+                      <Check className="w-3 h-3" />
+                      <span>Tersalin</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Salin Link</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Bagikan tautan <strong>ctt-rho.vercel.app</strong> kepada pengguna lain untuk berkolaborasi dan menyalin teks secara real-time.
+              </p>
+            </div>
+
             {/* Quick Access Recent History Preview Card (Always visible on sidebar so users can see recent copied/pasted texts at a glance) */}
             <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3">
               <div className="flex items-center justify-between">
@@ -2068,6 +2174,23 @@ export default function App() {
 
                               <button
                                 type="button"
+                                onClick={() => handleShareClipLink(clip)}
+                                title={`Salin tautan langsung ke teks ini (${PUBLIC_WEB_DOMAIN}#${clip.id})`}
+                                className={`p-2 rounded-lg border transition-colors cursor-pointer ${
+                                  copiedShareClipId === clip.id
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                    : 'bg-white border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-50'
+                                }`}
+                              >
+                                {copiedShareClipId === clip.id ? (
+                                  <Check className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Share2 className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
                                 onClick={() => handleTogglePin(clip)}
                                 title={clip.pinned ? 'Lepas sematan' : 'Sematkan di paling atas'}
                                 className={`p-2 rounded-lg border transition-colors cursor-pointer ${
@@ -2288,7 +2411,18 @@ export default function App() {
       {/* Quiet Footer */}
       <footer className="border-t border-slate-200 bg-white py-4 px-4 sm:px-8 mt-12">
         <div className="max-w-[1200px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
-          <span>TempelSalin — Papan Klip & Kolaborasi Teks Real-Time</span>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>TempelSalin — Papan Klip & Kolaborasi Teks Real-Time</span>
+            <span aria-hidden="true">·</span>
+            <a
+              href={PUBLIC_WEB_DOMAIN}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-blue-600 hover:underline"
+            >
+              {PUBLIC_WEB_DOMAIN}
+            </a>
+          </div>
           <span>
             Semua aktivitas salin, tempel, dan edit kolaborasi tersimpan otomatis di menu Riwayat Teks.
           </span>
