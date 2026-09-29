@@ -1,0 +1,6 @@
+{
+  "name": "TempelSalin — Papan Klip Bersama Real-Time",
+  "description": "Aplikasi web papan klip bersama real-time untuk menempel, menyimpan, dan menyalin teks antar perangkat dan pengguna secara instan.",
+  "requestFramePermissions": ["clipboard-read", "clipboard-write"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
